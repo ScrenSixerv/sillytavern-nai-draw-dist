@@ -35,10 +35,23 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist/
 
 不想依赖 CDN 的话，直接打开本仓库的 [`nai_draw.js`](./nai_draw.js)，复制全文粘贴到脚本编辑器，同样配置上面三个按钮即可。这样更新时需要手动重新粘贴。
 
+### 需要看日志时：换成调试版
+
+日常版**不含任何调试日志**（体积更小）。排查问题时把地址里的 `nai_draw.js` 换成 `nai_draw_debug.js`：
+
+```js
+import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist/nai_draw_debug.js'
+```
+
+调试版会输出**完整不截断**的排查信息：发送给 AI 的完整 sysPrompt（含情节上下文）、AI 原始输出、发送给生图模型的完整 prompt 与 negative，以及批量结果、余额预检等过程日志。
+
+⚠️ 调试版单条日志可达上万字符，浏览器开发者工具会把这些字符串留在内存里；**长时间挂机 + 自动生图会持续占用内存，排查完请换回日常版**。
+
 ## 版本
 
 | 版本 | 说明 |
 |------|------|
+| v27 | 恢复两个文件模式：日常版（无日志）+ 调试版；生成工具固化，无功能变更 |
 | v26 | 删除脚本头部说明.md（内容并入 README），无功能变更 |
 | v25 | 设置面板两处调整（说明精简 + 附加条目下移），无功能变更 |
 | v24 | NAI 5 计费同步（5 → 8 点/张） |
@@ -70,7 +83,5 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist/
 
 - 依赖：酒馆助手（JS-Slash-Runner）+ SillyTavern ≥ 1.12.14；出图服务为 [nai.sta1n.cn](https://nai.sta1n.cn)，需要自备该服务的 API Key
 - 作者：glm5.2 / glm5.3 / deepseek-v4.1-flash
-- **调试日志**：脚本顶部有 `const DEBUG = false;` 开关。日常保持 `false`（控制台只留一行加载提示）；排查问题时改成 `true`，会输出**完整不截断**的排查信息——发送给 AI 的完整 sysPrompt（含情节上下文）、AI 原始输出、发送给生图模型的完整 prompt 与 negative，以及批量结果、余额预检等过程日志
-  - 注意：`DEBUG` 开启时单条日志可达上万字符，浏览器开发者工具会把这些字符串留在内存里，长时间挂机 + 自动生图会持续占用内存，排查完记得改回 `false`
-  - 想改 `DEBUG` 需要用上面的**方式二**（直接粘贴脚本），import 方式无法改动脚本内容
+- **日志**：日常版 `nai_draw.js` 不含调试日志（只有故障时的 `console.warn/error`）；需要完整日志请改用 `nai_draw_debug.js`（见上方"需要看日志时"）
 - 生图服务由第三方提供，额度与可用性取决于该服务，与本脚本无关
