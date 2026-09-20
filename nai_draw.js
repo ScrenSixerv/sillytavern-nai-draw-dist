@@ -1,16 +1,10 @@
-// Nai2API 酒馆助手生图脚本 v26
+// Nai2API 酒馆助手生图脚本 v27
 // 作者: glm5.2 glm5.3 deepseek-v4.1-flash
 // 依赖: JS-Slash-Runner (TavernHelper) + SillyTavern >= 1.12.14   API: https://nai.sta1n.cn
-// 安装、用法与调试说明见仓库 README；排查问题：把下方的 DEBUG 改为 true
+// 安装与用法说明见仓库 README（本版本不含调试日志；需要排查请用调试版）
 
 (function () {
     'use strict';
-
-    const DEBUG = false;
-
-    function dlog() {
-        if (DEBUG && typeof console !== 'undefined') console.log.apply(console, arguments);
-    }
 
     const GLOBAL_CACHE_TTL_MS = 3000;
     let globalVarsCache = null;   // { data, at }
@@ -109,7 +103,6 @@
     function migrateSettings(merged, raw) {
         if (raw && raw.useNaturalLanguage === undefined && raw.useChinesePrompt === true) {
             merged.useNaturalLanguage = true;
-            dlog('[NAI] 设置迁移：useChinesePrompt → useNaturalLanguage');
         }
         return merged;
     }
@@ -188,7 +181,6 @@
             if (localList.length === 0) return;
             insertOrAssignVariables({ [PRESET_VAR_KEY]: localList }, { type: 'global' });
             invalidateGlobalVars();
-            dlog(`[NAI] 预设迁移完成：${localList.length} 条本地预设已写入全局变量`);
         } catch (e) {
             console.warn('[NAI] 预设迁移检查失败（不影响使用）:', e);
         }
@@ -349,7 +341,6 @@
                 return;
             }
         } catch (_) { /* ignore */ }
-        dlog(`[NAI ${type}]`, msg);
     }
 
     function sleep(ms) {
@@ -528,16 +519,12 @@
         const sysPrompt = sysPromptParts.join('\n');
 
         if (injectText) {
-            dlog(`[NAI] 已注入插入条目 ${injectObj.items.filter(i => i.enabled).length} 条，位置=${injectObj.position}`);
         }
-
-        dlog('[NAI] ▶ 发送给 AI 的完整 sysPrompt:\n' + sysPrompt);
 
         let raw = '';
         try {
             if (settings.useCustomAI && settings.customAIProfile) {
                 const originalProfile = await getCurrentProfile();
-                dlog(`[NAI] 切换 Profile: ${originalProfile} → ${settings.customAIProfile}`);
                 await switchProfile(settings.customAIProfile);
                 try {
                     raw = await runPromptGeneration(sysPrompt);
@@ -545,7 +532,6 @@
                     if (originalProfile && originalProfile !== settings.customAIProfile) {
                         try {
                             await switchProfile(originalProfile);
-                            dlog(`[NAI] 已还原 Profile: ${originalProfile}`);
                         } catch (e) {
                             console.warn('[NAI] 还原 Profile 失败:', e);
                         }
@@ -554,11 +540,9 @@
             } else {
                 raw = await runPromptGeneration(sysPrompt);
             }
-            dlog('[NAI] ◀ AI 原始输出:\n' + (raw || '(空)'));
 
             const out = stripThought(raw);
             if (out !== (raw || '').trim()) {
-                dlog('[NAI] ◀ 剥离思维链后:\n' + out);
             }
             if (!out) throw new Error('AI 返回空 prompt（或仅含思维链内容）');
             return out;
@@ -714,7 +698,6 @@
                 console.warn(`[NAI] 余额预检未通过: ${bal} < ${totalCost}`);
                 return false;
             }
-            dlog(`[NAI] 余额预检通过: ${bal} 点 ≥ 需 ${totalCost} 点`);
             return true;
         } catch (e) {
             console.warn('[NAI] 余额预检失败（不阻断提交）:', e);
@@ -745,7 +728,6 @@
             if (s.ok) results.push(s.value);
             else failures.push({ index: s.index, error: s.error });
         });
-        dlog(`[NAI] 批量结果: 成功 ${results.length} 张，失败 ${failures.length} 张`);
         return { results, failures };
     }
 
@@ -773,7 +755,6 @@
         }
         if (!isAuto && drawingInProgress) {
             toast('warning', '生图进行中，请稍候再试');
-            dlog('[NAI] doDraw 被锁拒绝 (drawingInProgress=true)');
             return;
         }
         pollJobState.queuedShown = false;
@@ -781,7 +762,6 @@
         const tail = getContextMessages(settings.contextMessageCount);
         const filtered = tail.filter(m => !isNaiImageMessage(m));
         const messages = filtered.slice(-settings.contextMessageCount);
-        dlog(`[NAI] 上下文准备: 读取尾部 ${tail.length} 条 → 剔除 NAI 生图后 ${filtered.length} 条 → 取最近 ${settings.contextMessageCount} 条`);
         const contextText = extractContextText(messages);
 
         try {
@@ -791,15 +771,12 @@
             if (settings.useNaturalLanguage) {
                 const MAX_NL = 1500;
                 if (aiPrompt.length > MAX_NL) {
-                    dlog(`[NAI] 英文描述 ${aiPrompt.length} 字符超出上限，截断至 ${MAX_NL}`);
                     aiPrompt = aiPrompt.slice(0, MAX_NL);
                 }
             }
 
             const prompt = buildPositivePrompt(aiPrompt, settings);
             const negative = buildNegativePrompt(settings);
-            dlog('[NAI] ▶ 发送给生图模型的完整 prompt:\n' + prompt);
-            dlog('[NAI] ▶ 发送给生图模型的 negative:\n' + negative);
 
             const count = Math.max(1, Math.min(MAX_BATCH, settings.count | 0));
             const unitCost = resolveSize(settings.size, settings.resolution, settings.model).cost;
@@ -1051,7 +1028,6 @@
             wrapper.innerHTML = html;
             const modal = wrapper.firstElementChild;
             topDoc.body.appendChild(modal);
-            dlog('[NAI] 设置面板已挂载到', topDoc === document ? 'iframe' : 'parent', 'body', modal);
 
             modal.querySelector('#nai-cancel').onclick = () => modal.remove();
 
@@ -1366,7 +1342,6 @@
             try {
                 const profileSelect = modal.querySelector('#nai-customAIProfile');
                 const profiles = await getProfileList();
-                dlog('[NAI] 读取到的 Profile 列表:', profiles);
                 profiles.forEach(name => {
                     const opt = topDoc.createElement('option');
                     opt.value = name;
@@ -1481,35 +1456,25 @@
 
             const isNaiImage = !!(m && m.name === 'NAI 生图');
 
-            dlog('[NAI] MSG_RECV id=', messageId,
-                'name=', m && m.name,
-                'autoDraw=', settings.autoDraw,
-                'drawingInProgress=', drawingInProgress,
-                'isNaiImage=', isNaiImage);
-
             if (!settings.autoDraw) return;
             if (messageId == null) return;
 
             const msgRole = m && m.role;
             if (msgRole && msgRole !== 'assistant') {
-                dlog('[NAI] 跳过非 AI 回复的消息触发 (role=', msgRole, ')');
                 return;
             }
 
             if (drawingInProgress) {
-                dlog('[NAI] 忽略生图过程中的消息触发，避免循环');
                 return;
             }
 
             if (isNaiImage) {
-                dlog('[NAI] 跳过脚本插入的图片消息', messageId);
                 return;
             }
 
             if (processedMessageIds.has(messageId)) return;
             processedMessageIds.add(messageId);
             if (processedMessageIds.size > 100) {
-                dlog(`[NAI] processedMessageIds 已达 ${processedMessageIds.size} 条，清空防膨胀`);
                 processedMessageIds.clear();
                 processedMessageIds.add(messageId);
             }
@@ -1577,7 +1542,6 @@
             } else {
                 track(eventOn(tavern_events.CHAT_CHANGED, () => {
                     if (processedMessageIds.size > 0) {
-                        dlog(`[NAI] 聊天切换，清空 processedMessageIds (${processedMessageIds.size} 条)`);
                         processedMessageIds.clear();
                     }
                 }));
@@ -1585,8 +1549,6 @@
         } catch (e) {
             console.warn('[NAI] 注册 CHAT_CHANGED 失败:', e);
         }
-
-        console.info(`[NAI] 脚本已加载 (v26)，调试日志${DEBUG ? '已开启' : '已关闭（排查问题时把脚本开头的 DEBUG 改成 true）'}`);
     }
 
     if (document.readyState === 'loading') {
