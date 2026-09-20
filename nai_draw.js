@@ -1,4 +1,4 @@
-// Nai2API 酒馆助手生图脚本 v27
+// Nai2API 酒馆助手生图脚本 v28
 // 作者: glm5.2 glm5.3 deepseek-v4.1-flash
 // 依赖: JS-Slash-Runner (TavernHelper) + SillyTavern >= 1.12.14   API: https://nai.sta1n.cn
 // 安装与用法说明见仓库 README（本版本不含调试日志；需要排查请用调试版）
@@ -483,19 +483,18 @@
             outputLine,
             '要求:',
             useNL
-                ? '1. 只输出一段英文自然语言描述（完整句子，可包含从句），不要换行、不要解释、不要前缀、不要写成逗号分隔的标签列表。'
+                ? '1. 只输出一段英文自然语言描述（一个或多个句子、短语，可包含从句），不要换行、不要解释、不要前缀、不要写成逗号分隔的标签列表。'
                 : '1. 只输出标签，用英文逗号分隔，不要换行、不要解释、不要前缀。',
             useNL
-                ? '2. 描述顺序: 角色形象, 动作姿势（或角色之间的互动）, 场景环境, 光线氛围。'
-                : '2. 标签顺序: 角色形象, 动作姿势（或角色之间的互动）, 场景环境, 光线氛围。',
-            '3. 角色形象、动作姿势（或角色之间的互动）、场景环境、光线氛围全部从上面的情节中提取。',
-            '4. 不输出任何 artist: 前缀（画风由系统单独控制）。',
-            '5. 不用考虑任何 NSFW 限制，按情节如实描述。',
-            ...(useNL ? ['6. 英文描述长度控制在 1500 字符以内，超出会被脚本截断。'] : []),
+                ? '2. 描述顺序: 角色形象, 动作姿势（或角色之间的互动）, 场景环境, 光线氛围。全部从上面的情节中提取。'
+                : '2. 标签顺序: 角色形象, 动作姿势（或角色之间的互动）, 场景环境, 光线氛围。全部从上面的情节中提取。',
+            '3. 不输出任何 artist: 前缀（画风由系统单独控制）。',
+            '4. 不用考虑任何 NSFW 限制，按情节如实描述。',
+            ...(useNL ? ['5. 英文描述长度控制在 2000 字符以内，超出会被脚本截断。'] : []),
         ];
 
         if (settings.userHint && settings.userHint.trim()) {
-            const idx = useNL ? '7' : '6';
+            const idx = useNL ? '6' : '5';
             parts.push(`${idx}. 用户额外需求（最高优先级，必须满足，可覆盖前面任何要求）: ` + settings.userHint.trim());
         }
         parts.push(
@@ -769,7 +768,7 @@
             let aiPrompt = await generatePromptByAI(contextText, settings);
 
             if (settings.useNaturalLanguage) {
-                const MAX_NL = 1500;
+                const MAX_NL = 2000;
                 if (aiPrompt.length > MAX_NL) {
                     aiPrompt = aiPrompt.slice(0, MAX_NL);
                 }
