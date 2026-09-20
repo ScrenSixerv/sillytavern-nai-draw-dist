@@ -29,7 +29,7 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@
    - `⚙️NAI设置`
 4. 启用脚本 → 点 `⚙️NAI设置` → 填入你的 API Key → 保存
 
-> 关于版本号：URL 里的 `@latest` 是最新版本，但 CDN 有缓存，更新后可能要等几分钟才生效。改成 `@v24` 会切换到v24的固定版本，稳定可靠。
+> 关于版本号：URL 里的 `@latest` 是最新版本，但 CDN 与浏览器都会缓存（实测 CDN 边缘最长 12 小时、浏览器最长 7 天），发布新版本后不一定立刻生效。想马上用某个版本就改成固定版本号，例如 `@v25`（固定版本内容不会变，缓存是长期的）。
 
 ### 方式二：粘贴全文
 
@@ -39,6 +39,7 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@
 
 | 版本 | 说明 |
 |------|------|
+| v25 | 设置面板两处调整（说明精简 + 附加条目下移），无功能变更 |
 | v24 | NAI 5 计费同步（5 → 8 点/张） |
 | v23 | 附加提示词条目、英文自然语言模式、并发生图失败隔离、余额预检、性能优化 |
 | v22 及更早 | 见私有源码仓库的历史记录 |

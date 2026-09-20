@@ -1,4 +1,4 @@
-// Nai2API 酒馆助手生图脚本 v24
+// Nai2API 酒馆助手生图脚本 v25
 // 作者: glm5.2 glm5.3 deepseek-v4.1-flash
 // 依赖: JS-Slash-Runner (TavernHelper) + SillyTavern >= 1.12.14   API: https://nai.sta1n.cn
 // 功能/入口/部署/调试说明见同目录「脚本头部说明.md」与仓库根目录「部署与使用说明.md」
@@ -1008,7 +1008,11 @@
               <div class="nai-row">
                 <div class="nai-lab">使用英文自然语言描述（关闭 = 输出标签）</div>
                 <label><input type="checkbox" id="nai-useNaturalLanguage" ${settings.useNaturalLanguage ? 'checked' : ''}/></label>
-                <div class="nai-hint">勾选后 AI 输出英文自然语言描述（适配 NAI 5），替代已不可用的中文转提示词；旧设置勾选过中文模式的会自动迁移</div>
+                <div class="nai-hint">勾选后 AI 输出英文自然语言描述（适配 NAI 5），而不是用逗号分隔的单个提示词</div>
+              </div>
+              <div class="nai-row">
+                <div class="nai-lab">自动生图（每条 AI 回复后）</div>
+                <label><input type="checkbox" id="nai-autoDraw" ${settings.autoDraw ? 'checked' : ''}/></label>
               </div>
               <details id="nai-inject-panel" class="nai-sub">
                 <summary id="nai-inject-summary">▸ 附加提示词条目（附加给生图 tag 的 AI 的内容）</summary>
@@ -1030,10 +1034,6 @@
                 <div id="nai-inject-list"></div>
                 <div id="nai-inject-empty" class="nai-tip" style="display:none;">（暂无条目）</div>
               </details>
-              <div class="nai-row">
-                <div class="nai-lab">自动生图（每条 AI 回复后）</div>
-                <label><input type="checkbox" id="nai-autoDraw" ${settings.autoDraw ? 'checked' : ''}/></label>
-              </div>
             </details>
 
             <div class="nai-actions">
@@ -1587,7 +1587,7 @@
             console.warn('[NAI] 注册 CHAT_CHANGED 失败:', e);
         }
 
-        console.info(`[NAI] 脚本已加载 (v24)，调试日志${DEBUG ? '已开启' : '已关闭（排查问题时把脚本开头的 DEBUG 改成 true）'}`);
+        console.info(`[NAI] 脚本已加载 (v25)，调试日志${DEBUG ? '已开启' : '已关闭（排查问题时把脚本开头的 DEBUG 改成 true）'}`);
     }
 
     if (document.readyState === 'loading') {
