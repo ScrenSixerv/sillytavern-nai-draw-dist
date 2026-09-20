@@ -20,7 +20,7 @@ SillyTavern 酒馆助手（JS-Slash-Runner / TavernHelper）用的全局脚本�
 2. 脚本内容只填一行：
 
 ```js
-import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@v24/nai_draw.js'
+import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@latest/nai_draw.js'
 ```
 
 3. 在脚本编辑器的"脚本按钮"区域添加三个按钮，**名称必须完全一致**（含 emoji 与空格）：
@@ -29,7 +29,7 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@
    - `⚙️NAI设置`
 4. 启用脚本 → 点 `⚙️NAI设置` → 填入你的 API Key → 保存
 
-> 关于版本号：URL 里的 `@v24` 是固定版本，稳定可靠。改成 `@latest` 会自动跟随最新版本，但 CDN 有缓存，更新后可能要等几分钟才生效。
+> 关于版本号：URL 里的 `@latest` 是最新版本，但 CDN 与浏览器都会缓存（实测 CDN 边缘最长 12 小时、浏览器最长 7 天），发布新版本后不一定立刻生效。想马上用某个版本就改成固定版本号，例如 `@v25`（固定版本内容不会变，缓存是长期的）。
 
 ### 方式二：粘贴全文
 
@@ -39,6 +39,7 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@
 
 | 版本 | 说明 |
 |------|------|
+| v25 | 设置面板两处调整（说明精简 + 附加条目下移），无功能变更 |
 | v24 | NAI 5 计费同步（5 → 8 点/张） |
 | v23 | 附加提示词条目、英文自然语言模式、并发生图失败隔离、余额预检、性能优化 |
 | v22 及更早 | 见私有源码仓库的历史记录 |
