@@ -20,7 +20,7 @@ SillyTavern 酒馆助手（JS-Slash-Runner / TavernHelper）用的全局脚本�
 2. 脚本内容只填一行：
 
 ```js
-import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@v24/nai_draw.js'
+import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@latest/nai_draw.js'
 ```
 
 3. 在脚本编辑器的"脚本按钮"区域添加三个按钮，**名称必须完全一致**（含 emoji 与空格）：
@@ -29,7 +29,7 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@
    - `⚙️NAI设置`
 4. 启用脚本 → 点 `⚙️NAI设置` → 填入你的 API Key → 保存
 
-> 关于版本号：URL 里的 `@v24` 是固定版本，稳定可靠。改成 `@latest` 会自动跟随最新版本，但 CDN 有缓存，更新后可能要等几分钟才生效。
+> 关于版本号：URL 里的 `@latest` 是最新版本，但 CDN 有缓存，更新后可能要等几分钟才生效。改成 `@v24` 会切换到v24的固定版本，稳定可靠。
 
 ### 方式二：粘贴全文
 
