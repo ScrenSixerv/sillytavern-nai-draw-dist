@@ -20,7 +20,7 @@ SillyTavern 酒馆助手（JS-Slash-Runner / TavernHelper）用的全局脚本�
 2. 脚本内容只填一行：
 
 ```js
-import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@latest/nai_draw.js'
+import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist/nai_draw.js'
 ```
 
 3. 在脚本编辑器的"脚本按钮"区域添加三个按钮，**名称必须完全一致**（含 emoji 与空格）：
@@ -29,7 +29,7 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist@
    - `⚙️NAI设置`
 4. 启用脚本 → 点 `⚙️NAI设置` → 填入你的 API Key → 保存
 
-> 关于版本号：URL 里的 `@latest` 是最新版本，但 CDN 与浏览器都会缓存（实测 CDN 边缘最长 12 小时、浏览器最长 7 天），发布新版本后不一定立刻生效。想马上用某个版本就改成固定版本号，例如 `@v25`（固定版本内容不会变，缓存是长期的）。
+> 关于版本号：上面这个地址不带版本号，等同于 `@latest`，会自动指向最新的发布版本（写法与 MVU 变量管理器一致）。CDN 与浏览器都会缓存它（实测 CDN 边缘最长 12 小时、浏览器最长 7 天），所以新版本发布后不一定立刻生效。想立刻用某个版本，就在地址里加上版本号，例如 `...nai-draw-dist@v25.0.0/nai_draw.js`——固定版本的缓存是长期的且内容永不改变，加载也更快。
 
 ### 方式二：粘贴全文
 
