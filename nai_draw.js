@@ -1,8 +1,7 @@
-// Nai2API 酒馆助手生图脚本 v25
+// Nai2API 酒馆助手生图脚本 v26
 // 作者: glm5.2 glm5.3 deepseek-v4.1-flash
 // 依赖: JS-Slash-Runner (TavernHelper) + SillyTavern >= 1.12.14   API: https://nai.sta1n.cn
-// 功能/入口/部署/调试说明见同目录「脚本头部说明.md」与仓库根目录「部署与使用说明.md」
-// 排查问题：把下面的 DEBUG 改为 true
+// 安装、用法与调试说明见仓库 README；排查问题：把下方的 DEBUG 改为 true
 
 (function () {
     'use strict';
@@ -1587,7 +1586,7 @@
             console.warn('[NAI] 注册 CHAT_CHANGED 失败:', e);
         }
 
-        console.info(`[NAI] 脚本已加载 (v25)，调试日志${DEBUG ? '已开启' : '已关闭（排查问题时把脚本开头的 DEBUG 改成 true）'}`);
+        console.info(`[NAI] 脚本已加载 (v26)，调试日志${DEBUG ? '已开启' : '已关闭（排查问题时把脚本开头的 DEBUG 改成 true）'}`);
     }
 
     if (document.readyState === 'loading') {
