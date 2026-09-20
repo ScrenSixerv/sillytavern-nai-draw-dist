@@ -23,7 +23,7 @@ SillyTavern 酒馆助手（JS-Slash-Runner / TavernHelper）用的全局脚本�
 import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist/nai_draw.js'
 ```
 
-3. 在脚本编辑器的"脚本按钮"区域添加三个按钮，**名称必须完全一致**（含 emoji 与空格）：
+3. 在脚本编辑器的"脚本按钮"区域添加三个按钮，**名称必须完全一致**（含 emoji ，无空格）：
    - `🎨NAI生图`
    - `💰NAI余额`
    - `⚙️NAI设置`
