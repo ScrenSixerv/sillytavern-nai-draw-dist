@@ -1,4 +1,4 @@
-// Nai2API 酒馆助手生图脚本 v28
+// Nai2API 酒馆助手生图脚本 v29
 // 作者: glm5.2 glm5.3 deepseek-v4.1-flash
 // 依赖: JS-Slash-Runner (TavernHelper) + SillyTavern >= 1.12.14   API: https://nai.sta1n.cn
 // 安装与用法说明见仓库 README（本版本不含调试日志；需要排查请用调试版）
@@ -31,7 +31,7 @@
 
     const MODEL_OPTIONS = [
         { key: 'nai-diffusion-4-5-full', label: 'NAI 4.5 Full（1点起/张）', cost: 1 },
-        { key: 'nai-diffusion-5-full',   label: 'NAI 5 Full（8点起/张）',  cost: 8 },
+        { key: 'nai-diffusion-5-full',   label: 'NAI 5 Full（6点起/张）',  cost: 6 },
     ];
 
     const STYLE_OPTIONS = [
@@ -56,15 +56,28 @@
     const ORIENTATION_OPTIONS = ['竖图', '横图', '方图'];
     const RESOLUTION_OPTIONS = ['1K', '2K', '4K'];
 
+    const JOB_STEPS = 28;
+
+    const SIZE_PIXELS = {
+        '竖图': [832, 1216], '横图': [1216, 832], '方图': [1024, 1024],
+        '2K竖图': [1088, 1600], '2K横图': [1600, 1088], '2K方图': [1344, 1344],
+        '4K竖图': [1344, 1984], '4K横图': [1984, 1344], '4K方图': [1728, 1728],
+    };
+
+    function imageCost(size, model) {
+        const px = SIZE_PIXELS[size] || SIZE_PIXELS['竖图'];
+        const pixels = px[0] * px[1];
+        const modelOpt = MODEL_OPTIONS.find(m => m.key === model) || MODEL_OPTIONS[0];
+        if (JOB_STEPS <= 28 && pixels <= 1024 * 1024) return modelOpt.cost;
+        const base = Math.ceil(2.951823174884865e-6 * pixels + 5.753298233447344e-7 * pixels * JOB_STEPS);
+        return Math.max(2, Math.ceil(base * (modelOpt.key === 'nai-diffusion-5-full' ? 1.5 : 1)));
+    }
+
     function resolveSize(orientation, resolution, model) {
         const ori = ORIENTATION_OPTIONS.indexOf(orientation) >= 0 ? orientation : '竖图';
-        let sizeCost = 1;
-        if (resolution === '2K') { sizeCost = 15; }
-        else if (resolution === '4K') { sizeCost = 25; }
-        const modelOpt = MODEL_OPTIONS.find(m => m.key === model);
-        const modelCost = modelOpt ? modelOpt.cost : 1;
-        const size = resolution === '1K' ? ori : `${resolution}${ori}`;
-        return { size, cost: Math.max(sizeCost, modelCost) };
+        const res = RESOLUTION_OPTIONS.indexOf(resolution) >= 0 ? resolution : '1K';
+        const size = res === '1K' ? ori : `${res}${ori}`;
+        return { size, cost: imageCost(size, model) };
     }
 
     const DEFAULT_NEGATIVE = [
@@ -81,7 +94,7 @@
 
     const DEFAULT_SETTINGS = {
         apiKey: '',
-        model: 'nai-diffusion-4-5-full', // 模型：4.5 full（1点起）或 5 full（8点起）
+        model: 'nai-diffusion-4-5-full', // 模型：4.5 full（1点起）或 5 full（6点起）
         style: '',              // 画风预设 key（空 = 不使用预设）
         size: '竖图',           // 朝向：竖图/横图/方图
         resolution: '1K',       // 分辨率：1K/2K/4K
@@ -584,7 +597,7 @@
             artist: artist,
             model: (MODEL_OPTIONS.find(m => m.key === settings.model) || MODEL_OPTIONS[0]).key,
             size: sizeInfo.size,
-            steps: 28,
+            steps: JOB_STEPS,
             scale: 6.0,
             cfg: 0,
             sampler: 'k_dpmpp_2m_sde',
@@ -801,7 +814,7 @@
             if (msg.includes('401') || /unauthorized|invalid.*token/i.test(msg)) {
                 toast('error', 'API Key 无效，请检查设置');
             } else if (msg.includes('402') || msg.includes('403') || /insufficient|余额不足/i.test(msg)) {
-                toast('error', '余额不足或无权限，请点 💰NAI余额 检查（注意 NAI 5 模型 1K 图为 8 点/张）');
+                toast('error', '余额不足或无权限，请点 💰NAI余额 检查（注意：2K/4K 按像素公式计费，单张点数远高于 1K）');
             } else if (/prefill|last message must be user|assistant message/i.test(msg)) {
                 toast('error', '模型不支持"续写"式请求（末尾是 assistant 消息）。请先发出一条自己的消息再续写；若发送按钮卡在停止状态，按一下停止或刷新页面即可');
             } else {
@@ -922,7 +935,7 @@
                     ${RESOLUTION_OPTIONS.map(s => `<option value="${s}" ${s === (settings.resolution || '1K') ? 'selected' : ''}>${s}</option>`).join('')}
                   </select>
                 </div>
-                <div id="nai-cost-hint" class="nai-hint">1K = 1 点/张，2K = 15，4K = 25（NAI 5 的 1K 为 8 点）</div>
+                <div id="nai-cost-hint" class="nai-hint">1K = 1 点/张（NAI 5 = 6）；2K/4K 按官方 Anlas 公式计费</div>
               </div>
               <label class="nai-row">
                 <div class="nai-lab">生成数量 (1-5)</div>

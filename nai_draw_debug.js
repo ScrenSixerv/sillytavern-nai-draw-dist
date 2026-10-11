@@ -1,4 +1,4 @@
-// Nai2API 酒馆助手生图脚本 v28（调试版：DEBUG 已开启，会输出完整日志）
+// Nai2API 酒馆助手生图脚本 v29（调试版：DEBUG 已开启，会输出完整日志）
 // 作者: glm5.2 glm5.3 deepseek-v4.1-flash
 // 依赖: JS-Slash-Runner (TavernHelper) + SillyTavern >= 1.12.14   API: https://nai.sta1n.cn
 // 安装、用法与调试说明见仓库 README；排查问题：把下方的 DEBUG 改为 true
@@ -43,8 +43,9 @@
 
     // ─────────────────────────────────────────────────────────────
     // [1] 配置区（含"网页端同步区"——与 nai.sta1n.cn/app.js 强耦合的常量集中在此）
-    // 核对方法：curl https://nai.sta1n.cn/app.js 搜 artistPresets / sizeOptions /
-    // selectedModelCost，或 GET /api/settings 看 defaultModel/defaults
+    // 核对方法：curl https://nai.sta1n.cn/app.js 搜 artistPresets / sizeMap，价格公式见
+    // 其引用的 generation-pricing.js（权威源：github.com/STA1N156/Nai2API 上游仓库）；
+    // GET /api/settings 可看 defaultModel/defaults
     // ─────────────────────────────────────────────────────────────
     const BASE_URL = 'https://nai.sta1n.cn';
     const POLL_INTERVAL_MS = 2000;
@@ -59,12 +60,12 @@
     const POLL_MAX_CONSECUTIVE_ERRORS = 5;
 
     // ── 网页端同步区：模型 ──
-    // 网页端模型下拉框共两项；单张 cost = max(尺寸cost, 模型cost)
-    // V5 模型 cost=8：1K 图 8 点/张；2K/4K 为 15/25 点/张不受影响
-    // （价格以网页端 app.js 的 selectedModelCost() 为准，2026-09-20 核实为 8）
+    // 网页端模型下拉框共两项；cost = 标准图（≤28 步且像素 ≤1024×1024）单张点数
+    // V5 模型标准价 6 点/张（原 8，站点 2026-10-10 下调）；4.5 为 1 点/张
+    // （价格以网页端 generation-pricing.js 的 generationPrice() 为准，2026-10-12 核实）
     const MODEL_OPTIONS = [
         { key: 'nai-diffusion-4-5-full', label: 'NAI 4.5 Full（1点起/张）', cost: 1 },
-        { key: 'nai-diffusion-5-full',   label: 'NAI 5 Full（8点起/张）',  cost: 8 },
+        { key: 'nai-diffusion-5-full',   label: 'NAI 5 Full（6点起/张）',  cost: 6 },
     ];
 
     // 画风预设 key 列表（用于设置面板下拉框）
@@ -95,22 +96,41 @@
     };
 
     // 尺寸：朝向 × 分辨率组合
-    // 与 nai.sta1n.cn 网页端 sizeOptions 同步：1K=1点/张，2K=15点/张，4K=25点/张
+    // 与 nai.sta1n.cn 网页端 sizeMap 同步（9 档组合像素见 SIZE_PIXELS）
     const ORIENTATION_OPTIONS = ['竖图', '横图', '方图'];
     const RESOLUTION_OPTIONS = ['1K', '2K', '4K'];
 
+    // 提交任务固定步数：站点仅网页端开放 1-50 步，/api/jobs 上限即 28；
+    // 价格公式按步数计费，故步数与计价共用此常量
+    const JOB_STEPS = 28;
+
+    // 各尺寸像素数（与站点 generation-pricing.js 的 sizeMap 一致）
+    const SIZE_PIXELS = {
+        '竖图': [832, 1216], '横图': [1216, 832], '方图': [1024, 1024],
+        '2K竖图': [1088, 1600], '2K横图': [1600, 1088], '2K方图': [1344, 1344],
+        '4K竖图': [1344, 1984], '4K横图': [1984, 1344], '4K方图': [1728, 1728],
+    };
+
+    // 单张点数：与站点 generationPrice() 同一公式（服务端按此实扣，客户端提交的 cost 会被忽略）
+    //   标准图（步数 ≤28 且像素 ≤1024×1024）：按模型标准价（4.5 = 1、V5 = 6）
+    //   其余：官方 Anlas 折算 base = ceil(2.951823174884865e-6·px + 5.753298233447344e-7·px·steps)
+    //         4.5 = max(2, base)；V5 = max(2, ceil(base×1.5))（先取整再乘 1.5 再取整）
+    // 2026-10-12 核实（28 步）：2K 竖/横 34/51、2K 方 35/53、4K 竖/横 51/77、4K 方 57/86
+    function imageCost(size, model) {
+        const px = SIZE_PIXELS[size] || SIZE_PIXELS['竖图'];
+        const pixels = px[0] * px[1];
+        const modelOpt = MODEL_OPTIONS.find(m => m.key === model) || MODEL_OPTIONS[0];
+        if (JOB_STEPS <= 28 && pixels <= 1024 * 1024) return modelOpt.cost;
+        const base = Math.ceil(2.951823174884865e-6 * pixels + 5.753298233447344e-7 * pixels * JOB_STEPS);
+        return Math.max(2, Math.ceil(base * (modelOpt.key === 'nai-diffusion-5-full' ? 1.5 : 1)));
+    }
+
     // 根据 (orientation, resolution, model) 返回 API 接受的 size 字符串及单张 cost
-    // cost 规则与网页端 generationCost() 一致：max(尺寸cost, 模型cost)
-    // 即：4.5 模型 1/2/4K = 1/15/25 点；V5 模型 1/2/4K = 8/15/25 点
     function resolveSize(orientation, resolution, model) {
         const ori = ORIENTATION_OPTIONS.indexOf(orientation) >= 0 ? orientation : '竖图';
-        let sizeCost = 1;
-        if (resolution === '2K') { sizeCost = 15; }
-        else if (resolution === '4K') { sizeCost = 25; }
-        const modelOpt = MODEL_OPTIONS.find(m => m.key === model);
-        const modelCost = modelOpt ? modelOpt.cost : 1;
-        const size = resolution === '1K' ? ori : `${resolution}${ori}`;
-        return { size, cost: Math.max(sizeCost, modelCost) };
+        const res = RESOLUTION_OPTIONS.indexOf(resolution) >= 0 ? resolution : '1K';
+        const size = res === '1K' ? ori : `${res}${ori}`;
+        return { size, cost: imageCost(size, model) };
     }
 
     const DEFAULT_NEGATIVE = [
@@ -127,7 +147,7 @@
 
     const DEFAULT_SETTINGS = {
         apiKey: '',
-        model: 'nai-diffusion-4-5-full', // 模型：4.5 full（1点起）或 5 full（8点起）
+        model: 'nai-diffusion-4-5-full', // 模型：4.5 full（1点起）或 5 full（6点起）
         style: '',              // 画风预设 key（空 = 不使用预设）
         size: '竖图',           // 朝向：竖图/横图/方图
         resolution: '1K',       // 分辨率：1K/2K/4K
@@ -765,7 +785,7 @@
         const styleOpt = STYLE_OPTIONS.find(s => s.key === settings.style);
         const artist = (styleOpt && styleOpt.key && ARTIST_PRESETS[styleOpt.key]) || '';
 
-        // 尺寸：朝向 + 分辨率组合，cost 按 max(尺寸cost, 模型cost) 计算
+        // 尺寸：朝向 + 分辨率组合，cost 按站点同款公式（imageCost）计算
         const sizeInfo = resolveSize(settings.size, settings.resolution, settings.model);
 
         const payload = {
@@ -774,7 +794,7 @@
             artist: artist,
             model: (MODEL_OPTIONS.find(m => m.key === settings.model) || MODEL_OPTIONS[0]).key,
             size: sizeInfo.size,
-            steps: 28,
+            steps: JOB_STEPS,
             scale: 6.0,
             cfg: 0,
             sampler: 'k_dpmpp_2m_sde',
@@ -1047,7 +1067,7 @@
             if (msg.includes('401') || /unauthorized|invalid.*token/i.test(msg)) {
                 toast('error', 'API Key 无效，请检查设置');
             } else if (msg.includes('402') || msg.includes('403') || /insufficient|余额不足/i.test(msg)) {
-                toast('error', '余额不足或无权限，请点 💰NAI余额 检查（注意 NAI 5 模型 1K 图为 8 点/张）');
+                toast('error', '余额不足或无权限，请点 💰NAI余额 检查（注意：2K/4K 按像素公式计费，单张点数远高于 1K）');
             } else if (/prefill|last message must be user|assistant message/i.test(msg)) {
                 // Claude 4.5+ 不再支持以 assistant 结尾的请求（旧版靠 prefill 续写）。
                 // 在"AI 回复 → 直接点继续"（回复尚未有后续用户消息）时就会撞这个错
@@ -1180,7 +1200,7 @@
                     ${RESOLUTION_OPTIONS.map(s => `<option value="${s}" ${s === (settings.resolution || '1K') ? 'selected' : ''}>${s}</option>`).join('')}
                   </select>
                 </div>
-                <div id="nai-cost-hint" class="nai-hint">1K = 1 点/张，2K = 15，4K = 25（NAI 5 的 1K 为 8 点）</div>
+                <div id="nai-cost-hint" class="nai-hint">1K = 1 点/张（NAI 5 = 6）；2K/4K 按官方 Anlas 公式计费</div>
               </div>
               <label class="nai-row">
                 <div class="nai-lab">生成数量 (1-5)</div>
