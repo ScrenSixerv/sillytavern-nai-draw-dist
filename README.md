@@ -29,7 +29,7 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist/
    - `⚙️NAI设置`
 4. 启用脚本 → 点 `⚙️NAI设置` → 填入你的 API Key → 保存
 
-> 关于版本号：上面这个地址不带版本号，等同于 `@latest`，会自动指向最新的发布版本。CDN 与浏览器都会缓存它（实测 CDN 边缘最长 12 小时、浏览器最长 7 天），所以新版本发布后不一定立刻生效。想立刻用某个版本，就在地址里加上版本号，例如 `...nai-draw-dist@v29.0.0/nai_draw.js`——固定版本的缓存是长期的且内容永不改变，加载也更快。
+> 关于版本号：上面这个地址不带版本号，等同于 `@latest`，会自动指向最新的发布版本。CDN 与浏览器都会缓存它（实测 CDN 边缘最长 12 小时、浏览器最长 7 天），所以新版本发布后不一定立刻生效。想立刻用某个版本，就在地址里加上版本号，例如 `...nai-draw-dist@v30.0.0/nai_draw.js`——固定版本的缓存是长期的且内容永不改变，加载也更快。
 
 ### 方式二：粘贴全文
 
@@ -51,6 +51,7 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist/
 
 | 版本 | 说明 |
 |------|------|
+| v30 | 生图期间再点 `🎨NAI生图` 显示进度（不会重复生图）；修复手动生图未上锁导致的重复扣费；每张图下方附带可折叠的提示词，图片消息改为隐藏消息（不发给主模型） |
 | v29 | 同步站点新计价：NAI 5 的 1K 改 6 点/张；2K/4K 改按官方 Anlas 公式（比原固定档贵） |
 | v28 | 更新发给提示词 AI 的要求文案（合并两条要求、自然语言描述上限放宽到 2000 字符） |
 | v27 | 恢复两个文件模式：日常版（无日志）+ 调试版；生成工具固化，无功能变更 |
@@ -69,7 +70,8 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist/
 - 6 种画风预设；模型可选 NAI 4.5（1 点起/张）或 NAI 5（6 点起/张）；尺寸 3 朝向 × 1K/2K/4K，费用自动计算
 - 同一提示词并发生成 1-5 张，**单张失败不影响其他张**；提交前按当前价目做余额预检
 - 每条 AI 回复后自动生图（可开关）
-- 图片以系统消息插入聊天，不会被模型当作"自己的发言"续写
+- 图片以隐藏消息插入聊天：不会发给主聊天模型，也不会被当作"自己的发言"续写；每张图下方有默认收起的「🎨 提示词」折叠块，可查看本张图用的提示词与参数
+- 生图进行中再点 `🎨NAI生图` 会显示当前进度（写提示词 / 排队位置 / 生成百分比），不会重复生图
 - 三个手动按钮：生图 / 查余额 / 设置面板
 
 ## 入口
@@ -84,6 +86,6 @@ import 'https://testingcf.jsdelivr.net/gh/ScrenSixerv/sillytavern-nai-draw-dist/
 ## 说明
 
 - 依赖：酒馆助手（JS-Slash-Runner）+ SillyTavern ≥ 1.12.14；出图服务为 [nai.sta1n.cn](https://nai.sta1n.cn)，需要自备该服务的 API Key
-- 作者：glm5.2 / glm5.3 / deepseek-v4.1-flash
+- 作者：glm5.2 / glm5.3 / deepseek-v4.1-flash / claude-opus-5.5
 - **日志**：日常版 `nai_draw.js` 不含调试日志（只有故障时的 `console.warn/error`）；需要完整日志请改用 `nai_draw_debug.js`（见上方"需要看日志时"）
 - 生图服务由第三方提供，额度与可用性取决于该服务，与本脚本无关

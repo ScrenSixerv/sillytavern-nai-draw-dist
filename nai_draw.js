@@ -1,5 +1,5 @@
-// Nai2API 酒馆助手生图脚本 v29
-// 作者: glm5.2 glm5.3 deepseek-v4.1-flash
+// Nai2API 酒馆助手生图脚本 v30
+// 作者: glm5.2 glm5.3 deepseek-v4.1-flash claude-opus-5.5
 // 依赖: JS-Slash-Runner (TavernHelper) + SillyTavern >= 1.12.14   API: https://nai.sta1n.cn
 // 安装与用法说明见仓库 README（本版本不含调试日志；需要排查请用调试版）
 
@@ -624,9 +624,21 @@
         return { id: jid, raw: job };
     }
 
-    const pollJobState = { queuedShown: false, runningShown: false };
+    function updateJobSlot(slot, j) {
+        if (!slot || !j) return;
+        const s = j.status || '';
+        slot.status = s === 'completed' ? 'done'
+            : (s === 'error' || s === 'cancelled') ? 'failed'
+            : (s || slot.status);
+        const gp = (j.generationProgress && typeof j.generationProgress === 'object') ? j.generationProgress : {};
+        slot.queuePosition = Number(j.queuePosition) || 0;
+        slot.queuedCount = Number(j.queuedCount) || 0;
+        slot.percent = Number(gp.percent) || 0;
+        slot.step = Number(gp.step) || 0;
+        slot.total = Number(gp.total) || 0;
+    }
 
-    async function pollJob(jobId, apiKey) {
+    async function pollJob(jobId, apiKey, slot) {
         const headers = buildHeaders(apiKey);
         const start = Date.now();
         let lastStatus = null;
@@ -661,14 +673,15 @@
                 continue;
             }
             const status = j.status || '';
+            updateJobSlot(slot, j);
             if (status !== lastStatus) {
                 lastStatus = status;
-                if (status === 'queued' && !pollJobState.queuedShown) {
-                    pollJobState.queuedShown = true;
-                    toast('info', `排队中 #${j.queuePosition ?? '?'}`);
-                } else if (status === 'running' && !pollJobState.runningShown) {
-                    pollJobState.runningShown = true;
-                    toast('info', '生成中…');
+                if (status === 'queued' && !drawState.queuedShown) {
+                    drawState.queuedShown = true;
+                    toast('info', `排队中 #${j.queuePosition ?? '?'}（生图期间再点 🎨NAI生图 可查看进度）`);
+                } else if (status === 'running' && !drawState.runningShown) {
+                    drawState.runningShown = true;
+                    toast('info', '生成中…（再点 🎨NAI生图 可查看进度）');
                 }
             }
             if (status === 'done' || status === 'completed') {
@@ -717,20 +730,26 @@
         }
     }
 
-    async function generateOnce(prompt, negative, settings) {
+    async function generateOnce(prompt, negative, settings, slot) {
         const job = await submitJob(prompt, negative, settings);
-        const result = await pollJob(job.id, settings.apiKey);
+        if (slot) slot.status = 'queued';
+        const result = await pollJob(job.id, settings.apiKey, slot);
+        if (slot) slot.status = 'done';
         return result;
     }
 
     async function generateBatch(prompt, negative, settings) {
         const n = Math.max(1, Math.min(MAX_BATCH, settings.count | 0));
+        const slots = [];
+        for (let i = 0; i < n; i++) slots.push({ status: 'submitting' });
+        drawState.jobs = slots;
+        setDrawPhase('jobs');
         const tasks = [];
         for (let i = 0; i < n; i++) {
             tasks.push(
-                generateOnce(prompt, negative, settings)
+                generateOnce(prompt, negative, settings, slots[i])
                     .then(r => ({ ok: true, index: i, value: r }))
-                    .catch(e => ({ ok: false, index: i, error: e }))
+                    .catch(e => { slots[i].status = 'failed'; return { ok: false, index: i, error: e }; })
             );
         }
         const settled = await Promise.all(tasks);
@@ -745,12 +764,61 @@
 
     const IMAGE_MESSAGE_ROLE = 'system';
 
-    async function insertImagesToChat(results) {
+    const IMAGE_MESSAGE_HIDDEN = true;
+
+    function modelShortName(key) {
+        const m = MODEL_OPTIONS.find(x => x.key === key) || MODEL_OPTIONS[0];
+        return m.label.replace(/（.*?）/g, '').trim();
+    }
+
+    function buildImageMessage(url, meta, cost) {
+        const img = `![](${url})`;
+        if (!meta) return img;
+        const lines = [];
+        lines.push('正面（AI）：' + (meta.aiPrompt || '（空）'));
+        if (meta.presetPrompt) lines.push('预置正面：' + meta.presetPrompt);
+        lines.push('画风：' + meta.styleLabel);
+        lines.push('负面：' + (meta.customNegative ? meta.negative : '默认'));
+        const params = [modelShortName(meta.model), `${meta.resolution} ${meta.orientation}`, `${JOB_STEPS} 步`];
+        if (Number.isFinite(Number(cost)) && cost !== '' && cost != null) params.push(`实扣 ${Number(cost)} 点`);
+        lines.push('参数：' + params.join(' · '));
+        const body = escapeHtml(lines.join('\n').replace(/\r/g, '')).replace(/\n\s*\n/g, '\n');
+        return `${img}\n\n<div class="nai-prompt"><details><summary>🎨 提示词</summary><pre><code>${body}</code></pre></details></div>`;
+    }
+
+    function buildDrawMeta(aiPrompt, prompt, negative, settings) {
+        const sizeInfo = resolveSize(settings.size, settings.resolution, settings.model);
+        const styleOpt = STYLE_OPTIONS.find(s => s.key === settings.style) || STYLE_OPTIONS[0];
+        const res = RESOLUTION_OPTIONS.indexOf(settings.resolution) >= 0 ? settings.resolution : '1K';
+        const ori = ORIENTATION_OPTIONS.indexOf(settings.size) >= 0 ? settings.size : '竖图';
+        return {
+            aiPrompt: String(aiPrompt || '').trim(),
+            presetPrompt: String(settings.presetPrompt || '').trim(),
+            prompt: prompt,
+            negative: negative,
+            customNegative: !!(settings.customNegative && settings.customNegative.trim()),
+            style: styleOpt.key,
+            styleLabel: styleOpt.key ? styleOpt.label : '不使用',
+            model: (MODEL_OPTIONS.find(m => m.key === settings.model) || MODEL_OPTIONS[0]).key,
+            size: sizeInfo.size,
+            orientation: ori,
+            resolution: res,
+            steps: JOB_STEPS,
+            naturalLanguage: !!settings.useNaturalLanguage,
+        };
+    }
+
+    async function insertImagesToChat(results, meta) {
         if (!results || results.length === 0) return;
         const messages = results.map(r => ({
             role: IMAGE_MESSAGE_ROLE,
-            message: `![](${r.url})`,
+            message: buildImageMessage(r.url, meta, r.cost),
             name: 'NAI 生图',
+            is_hidden: IMAGE_MESSAGE_HIDDEN,
+            extra: meta ? {
+                type: 'narrator',
+                nai_draw: Object.assign({}, meta, { url: r.url, cost: r.cost, createdAt: new Date().toISOString() }),
+            } : { type: 'narrator' },
         }));
         try {
             await createChatMessages(messages, { insert_before: 'end', refresh: 'affected' });
@@ -760,17 +828,117 @@
         }
     }
 
+    const AUTO_START_DELAY_MS = 500;    // 自动生图开始前等待（让酒馆先完成消息渲染）
+    const AUTO_COOLDOWN_MS = 2000;      // 自动生图结束后延迟释放锁，确保插图触发的事件已过期
+    const drawState = {
+        active: false,
+        isAuto: false,
+        phase: 'idle',
+        startedAt: 0,
+        phaseAt: 0,
+        jobs: [],              // 每张图一个进度槽：{ status, queuePosition, queuedCount, percent, step, total }
+        queuedShown: false,    // "排队中/生成中"提示去重（同一次生图只弹一次）
+        runningShown: false,
+    };
+
+    function beginDraw(isAuto) {
+        const now = Date.now();
+        drawState.active = true;
+        drawState.isAuto = !!isAuto;
+        drawState.phase = isAuto ? 'waiting' : 'prompt';
+        drawState.startedAt = now;
+        drawState.phaseAt = now;
+        drawState.jobs = [];
+        drawState.queuedShown = false;
+        drawState.runningShown = false;
+    }
+
+    function endDraw() {
+        drawState.active = false;
+        drawState.phase = 'idle';
+        drawState.jobs = [];
+    }
+
+    function setDrawPhase(phase) {
+        drawState.phase = phase;
+        drawState.phaseAt = Date.now();
+    }
+
+    function describeSlot(slot) {
+        if (!slot) return '准备中';
+        switch (slot.status) {
+            case 'submitting': return '正在提交';
+            case 'queued':
+                return slot.queuePosition
+                    ? `排队中 #${slot.queuePosition}${slot.queuedCount ? '/' + slot.queuedCount : ''}`
+                    : '排队中';
+            case 'running':
+                if (slot.percent > 0) {
+                    const steps = (slot.step && slot.total) ? `（第 ${slot.step}/${slot.total} 步）` : '';
+                    return `生成中 ${Math.round(slot.percent)}%${steps}`;
+                }
+                return '生成中';
+            case 'done': return '已完成';
+            case 'failed': return '失败';
+            default: return slot.status || '准备中';
+        }
+    }
+
+    function describeJobs(jobs) {
+        const n = jobs.length;
+        if (n === 0) return '正在提交任务';
+        if (n === 1) return describeSlot(jobs[0]);
+        const done = jobs.filter(j => j.status === 'done').length;
+        const failed = jobs.filter(j => j.status === 'failed').length;
+        const pending = [];
+        jobs.forEach((j, i) => {
+            if (j.status !== 'done' && j.status !== 'failed') pending.push(`第 ${i + 1} 张${describeSlot(j)}`);
+        });
+        let s = `已完成 ${done}/${n} 张`;
+        if (failed) s += `，失败 ${failed} 张`;
+        if (pending.length) s += '；' + pending.join('，');
+        return s;
+    }
+
+    function formatDrawProgress() {
+        const now = Date.now();
+        const who = drawState.isAuto ? '自动生图' : '生图';
+        const elapsed = `已 ${Math.max(0, Math.round((now - drawState.startedAt) / 1000))} 秒`;
+        switch (drawState.phase) {
+            case 'waiting': return `${who}即将开始…`;
+            case 'prompt': return `${who}进行中：AI 正在写提示词…（${elapsed}）`;
+            case 'precheck': return `${who}进行中：正在核对余额…（${elapsed}）`;
+            case 'jobs': return `${who}进行中：${describeJobs(drawState.jobs)}（${elapsed}）`;
+            case 'inserting': return `${who}进行中：正在把图片插入聊天…（${elapsed}）`;
+            case 'cooldown': {
+                const left = Math.max(1, Math.ceil((drawState.phaseAt + AUTO_COOLDOWN_MS - now) / 1000));
+                return `${who}刚刚结束，${left} 秒后可再次生图`;
+            }
+            default: return `${who}进行中（${elapsed}）`;
+        }
+    }
+
     async function doDraw(settings, isAuto = false) {
         if (!settings.apiKey) {
             toast('error', '请先在 ⚙️ NAI 设置 中填入 API Key');
             return;
         }
-        if (!isAuto && drawingInProgress) {
-            toast('warning', '生图进行中，请稍候再试');
-            return;
+        if (!isAuto) {
+            if (drawState.active) {
+                toast('info', formatDrawProgress());
+                return;
+            }
+            beginDraw(false);
         }
-        pollJobState.queuedShown = false;
-        pollJobState.runningShown = false;
+        try {
+            await runDraw(settings);
+        } finally {
+            if (!isAuto) endDraw();
+        }
+    }
+
+    async function runDraw(settings) {
+        setDrawPhase('prompt');
         const tail = getContextMessages(settings.contextMessageCount);
         const filtered = tail.filter(m => !isNaiImageMessage(m));
         const messages = filtered.slice(-settings.contextMessageCount);
@@ -792,13 +960,15 @@
 
             const count = Math.max(1, Math.min(MAX_BATCH, settings.count | 0));
             const unitCost = resolveSize(settings.size, settings.resolution, settings.model).cost;
+            setDrawPhase('precheck');
             if (!(await precheckBalance(settings, unitCost * count))) return;
 
             toast('info', `提交 ${count} 张生图任务…`);
             const { results, failures } = await generateBatch(prompt, negative, settings);
 
             if (results.length > 0) {
-                await insertImagesToChat(results);
+                setDrawPhase('inserting');
+                await insertImagesToChat(results, buildDrawMeta(aiPrompt, prompt, negative, settings));
             }
 
             if (failures.length === 0) {
@@ -1454,7 +1624,6 @@
     }
 
     const processedMessageIds = new Set();
-    let drawingInProgress = false;
 
     async function onMessageReceived(messageId) {
         try {
@@ -1476,7 +1645,7 @@
                 return;
             }
 
-            if (drawingInProgress) {
+            if (drawState.active) {
                 return;
             }
 
@@ -1491,13 +1660,14 @@
                 processedMessageIds.add(messageId);
             }
 
-            drawingInProgress = true;
+            beginDraw(true);
             try {
-                await sleep(500);
+                await sleep(AUTO_START_DELAY_MS);
                 await doDraw(settings, true);
             } finally {
-                await sleep(2000);
-                drawingInProgress = false;
+                setDrawPhase('cooldown');
+                await sleep(AUTO_COOLDOWN_MS);
+                endDraw();
             }
         } catch (e) {
             console.error('[NAI] 自动生图异常:', e);

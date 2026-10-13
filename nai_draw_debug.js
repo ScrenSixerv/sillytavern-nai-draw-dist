@@ -1,5 +1,5 @@
-// Nai2API 酒馆助手生图脚本 v29（调试版：DEBUG 已开启，会输出完整日志）
-// 作者: glm5.2 glm5.3 deepseek-v4.1-flash
+// Nai2API 酒馆助手生图脚本 v30（调试版：DEBUG 已开启，会输出完整日志）
+// 作者: glm5.2 glm5.3 deepseek-v4.1-flash claude-opus-5.5
 // 依赖: JS-Slash-Runner (TavernHelper) + SillyTavern >= 1.12.14   API: https://nai.sta1n.cn
 // 安装、用法与调试说明见仓库 README；排查问题：把下方的 DEBUG 改为 true
 
@@ -821,10 +821,26 @@
         return { id: jid, raw: job };
     }
 
-    // 轮询期间的全局 toast 去重标志（多张并发时只弹一次）
-    const pollJobState = { queuedShown: false, runningShown: false };
+    // 把一次轮询结果写进这张图的进度槽（供"再次点击显示进度"读取）
+    // 站点 GET /api/jobs/{id} 返回 queuePosition / queuedCount 与
+    // generationProgress { percent, step, total, active }（上游 server/index.js 的 publicJob；
+    // /api/jobs 提交的任务 source = 'direct'，属于服务端实时推送进度的来源之一）
+    function updateJobSlot(slot, j) {
+        if (!slot || !j) return;
+        const s = j.status || '';
+        slot.status = s === 'completed' ? 'done'
+            : (s === 'error' || s === 'cancelled') ? 'failed'
+            : (s || slot.status);
+        const gp = (j.generationProgress && typeof j.generationProgress === 'object') ? j.generationProgress : {};
+        slot.queuePosition = Number(j.queuePosition) || 0;
+        slot.queuedCount = Number(j.queuedCount) || 0;
+        slot.percent = Number(gp.percent) || 0;
+        slot.step = Number(gp.step) || 0;
+        slot.total = Number(gp.total) || 0;
+    }
 
-    async function pollJob(jobId, apiKey) {
+    // slot：可选，本张图在 drawState.jobs 里的进度槽
+    async function pollJob(jobId, apiKey, slot) {
         const headers = buildHeaders(apiKey);
         const start = Date.now();
         let lastStatus = null;
@@ -862,14 +878,16 @@
                 continue;
             }
             const status = j.status || '';
+            updateJobSlot(slot, j);
+            // 排队/生成中提示：同一次生图只弹一次（多张并发时不重复刷屏），标志随 drawState 每次生图重置
             if (status !== lastStatus) {
                 lastStatus = status;
-                if (status === 'queued' && !pollJobState.queuedShown) {
-                    pollJobState.queuedShown = true;
-                    toast('info', `排队中 #${j.queuePosition ?? '?'}`);
-                } else if (status === 'running' && !pollJobState.runningShown) {
-                    pollJobState.runningShown = true;
-                    toast('info', '生成中…');
+                if (status === 'queued' && !drawState.queuedShown) {
+                    drawState.queuedShown = true;
+                    toast('info', `排队中 #${j.queuePosition ?? '?'}（生图期间再点 🎨NAI生图 可查看进度）`);
+                } else if (status === 'running' && !drawState.runningShown) {
+                    drawState.runningShown = true;
+                    toast('info', '生成中…（再点 🎨NAI生图 可查看进度）');
                 }
             }
             if (status === 'done' || status === 'completed') {
@@ -928,10 +946,12 @@
         }
     }
 
-    // 单次生图（提交+轮询）
-    async function generateOnce(prompt, negative, settings) {
+    // 单次生图（提交+轮询）；slot 为本张图的进度槽（可选）
+    async function generateOnce(prompt, negative, settings, slot) {
         const job = await submitJob(prompt, negative, settings);
-        const result = await pollJob(job.id, settings.apiKey);
+        if (slot) slot.status = 'queued';
+        const result = await pollJob(job.id, settings.apiKey, slot);
+        if (slot) slot.status = 'done';
         return result;
     }
 
@@ -941,12 +961,17 @@
     // 返回 { results: [{url,cost,durationMs}], failures: [{index, error}] }
     async function generateBatch(prompt, negative, settings) {
         const n = Math.max(1, Math.min(MAX_BATCH, settings.count | 0));
+        // 每张图一个进度槽，挂到 drawState 上供进度查询
+        const slots = [];
+        for (let i = 0; i < n; i++) slots.push({ status: 'submitting' });
+        drawState.jobs = slots;
+        setDrawPhase('jobs');
         const tasks = [];
         for (let i = 0; i < n; i++) {
             tasks.push(
-                generateOnce(prompt, negative, settings)
+                generateOnce(prompt, negative, settings, slots[i])
                     .then(r => ({ ok: true, index: i, value: r }))
-                    .catch(e => ({ ok: false, index: i, error: e }))
+                    .catch(e => { slots[i].status = 'failed'; return { ok: false, index: i, error: e }; })
             );
         }
         const settled = await Promise.all(tasks);
@@ -974,16 +999,84 @@
     //   外观"取决于消息的 is_system，酒馆助手是从 is_hidden 取该值（不传即 false），与 role 无关
     const IMAGE_MESSAGE_ROLE = 'system';
 
+    // 图片消息附带提示词（v30）
+    // 图片消息设为隐藏（is_hidden → ST 的 is_system = true）：ST 组装请求时整条跳过，
+    // 图片地址与折叠的提示词都不会发给主模型（避免多耗 token、NSFW 标签带偏文风）；
+    // 顺带让"图片后直接点继续"时请求末尾不再是这条消息。
+    // 隐藏消息照常渲染 Markdown（ST messageFormatting："Let hidden messages have markdown"），
+    // 所以 <details> 折叠块能正常显示；DOMPurify 默认放行 details/summary/pre/code。
+    // 提示词放进 <pre><code>：ST 的下划线斜体扩展会跳过 <code> 内容，
+    // dino_(dinoartforame) 这类标签里的下划线不会被吃掉；内容先 escapeHtml 防止被当成标签
+    const IMAGE_MESSAGE_HIDDEN = true;
+
+    // 模型短名（去掉 label 里的价格说明）
+    function modelShortName(key) {
+        const m = MODEL_OPTIONS.find(x => x.key === key) || MODEL_OPTIONS[0];
+        return m.label.replace(/（.*?）/g, '').trim();
+    }
+
+    // 生成图片消息正文：图片 + 默认收起的提示词折叠块
+    // 显示 AI 写的部分 + 预置正面 + 画风名（画风全文很长，只写名字）；
+    // 负面为默认时只写"默认"，自定义才显示全文。完整的最终提示词另存 extra.nai_draw
+    // 注意：showdown 不把 <details> 当作 HTML 块标签，单独写会被拆进 <p> 里，
+    // 所以外层套一个 <div>（块标签，整块原样保留），且整块写在一行、内部不能有空行
+    // （已用 ST 同款 showdown 配置实测：<div> 包裹后输出完整，标签下划线不丢）
+    function buildImageMessage(url, meta, cost) {
+        const img = `![](${url})`;
+        if (!meta) return img;
+        const lines = [];
+        lines.push('正面（AI）：' + (meta.aiPrompt || '（空）'));
+        if (meta.presetPrompt) lines.push('预置正面：' + meta.presetPrompt);
+        lines.push('画风：' + meta.styleLabel);
+        lines.push('负面：' + (meta.customNegative ? meta.negative : '默认'));
+        const params = [modelShortName(meta.model), `${meta.resolution} ${meta.orientation}`, `${JOB_STEPS} 步`];
+        if (Number.isFinite(Number(cost)) && cost !== '' && cost != null) params.push(`实扣 ${Number(cost)} 点`);
+        lines.push('参数：' + params.join(' · '));
+        const body = escapeHtml(lines.join('\n').replace(/\r/g, '')).replace(/\n\s*\n/g, '\n');
+        return `${img}\n\n<div class="nai-prompt"><details><summary>🎨 提示词</summary><pre><code>${body}</code></pre></details></div>`;
+    }
+
+    // 汇总本次生图的提示词与参数（供 buildImageMessage 与 extra.nai_draw 使用）
+    function buildDrawMeta(aiPrompt, prompt, negative, settings) {
+        const sizeInfo = resolveSize(settings.size, settings.resolution, settings.model);
+        const styleOpt = STYLE_OPTIONS.find(s => s.key === settings.style) || STYLE_OPTIONS[0];
+        const res = RESOLUTION_OPTIONS.indexOf(settings.resolution) >= 0 ? settings.resolution : '1K';
+        const ori = ORIENTATION_OPTIONS.indexOf(settings.size) >= 0 ? settings.size : '竖图';
+        return {
+            aiPrompt: String(aiPrompt || '').trim(),
+            presetPrompt: String(settings.presetPrompt || '').trim(),
+            prompt: prompt,
+            negative: negative,
+            customNegative: !!(settings.customNegative && settings.customNegative.trim()),
+            style: styleOpt.key,
+            styleLabel: styleOpt.key ? styleOpt.label : '不使用',
+            model: (MODEL_OPTIONS.find(m => m.key === settings.model) || MODEL_OPTIONS[0]).key,
+            size: sizeInfo.size,
+            orientation: ori,
+            resolution: res,
+            steps: JOB_STEPS,
+            naturalLanguage: !!settings.useNaturalLanguage,
+        };
+    }
+
     // 图片插入聊天：每张图仍是独立一条消息（保持原有阅读体验），
     // 但改用一次批量 createChatMessages 调用提交全部消息
     // 性能：v22 及更早是"每张一次 createChatMessages + 300ms 间隔"，
     // 5 张图 = 5 次聊天重渲染 + 5 轮事件派发；批量后只重渲染一次
-    async function insertImagesToChat(results) {
+    // meta：本次生图的提示词与参数（buildDrawMeta），用于折叠块与结构化副本
+    async function insertImagesToChat(results, meta) {
         if (!results || results.length === 0) return;
         const messages = results.map(r => ({
             role: IMAGE_MESSAGE_ROLE,
-            message: `![](${r.url})`,
+            message: buildImageMessage(r.url, meta, r.cost),
             name: 'NAI 生图',
+            is_hidden: IMAGE_MESSAGE_HIDDEN,
+            // 酒馆助手传了 extra 就会整体覆盖它为 system 角色自动设置的 extra.type，
+            // 所以这里必须把 narrator 标记带上；nai_draw 为结构化副本（留给以后的"重画/改词"）
+            extra: meta ? {
+                type: 'narrator',
+                nai_draw: Object.assign({}, meta, { url: r.url, cost: r.cost, createdAt: new Date().toISOString() }),
+            } : { type: 'narrator' },
         }));
         try {
             await createChatMessages(messages, { insert_before: 'end', refresh: 'affected' });
@@ -997,21 +1090,130 @@
     // [7] 主流程
     // ─────────────────────────────────────────────────────────────
 
+    // 生图锁 + 进度状态（v30）
+    // v29 及更早：锁只在自动生图路径里上（onMessageReceived），手动按钮只检查、从不上锁——
+    // 连点两次 🎨NAI生图，或手动生图时恰好来了 AI 回复，会并发跑两套流程（重复扣费、重复插图、
+    // 两次切换连接预设交叉执行后还原到错误的预设）。v30 起手动与自动共用这把锁，
+    // 锁占用时再点按钮不会新开生图，而是弹出当前进度
+    // phase：waiting（自动生图开始前的短暂等待）/ prompt（AI 写提示词）/ precheck（余额预检）/
+    //        jobs（提交与生成）/ inserting（插入聊天）/ cooldown（自动生图结束后的防循环冷却）
+    const AUTO_START_DELAY_MS = 500;    // 自动生图开始前等待（让酒馆先完成消息渲染）
+    const AUTO_COOLDOWN_MS = 2000;      // 自动生图结束后延迟释放锁，确保插图触发的事件已过期
+    const drawState = {
+        active: false,
+        isAuto: false,
+        phase: 'idle',
+        startedAt: 0,
+        phaseAt: 0,
+        jobs: [],              // 每张图一个进度槽：{ status, queuePosition, queuedCount, percent, step, total }
+        queuedShown: false,    // "排队中/生成中"提示去重（同一次生图只弹一次）
+        runningShown: false,
+    };
+
+    function beginDraw(isAuto) {
+        const now = Date.now();
+        drawState.active = true;
+        drawState.isAuto = !!isAuto;
+        drawState.phase = isAuto ? 'waiting' : 'prompt';
+        drawState.startedAt = now;
+        drawState.phaseAt = now;
+        drawState.jobs = [];
+        drawState.queuedShown = false;
+        drawState.runningShown = false;
+    }
+
+    function endDraw() {
+        drawState.active = false;
+        drawState.phase = 'idle';
+        drawState.jobs = [];
+    }
+
+    function setDrawPhase(phase) {
+        drawState.phase = phase;
+        drawState.phaseAt = Date.now();
+    }
+
+    // 单张图的状态文字
+    function describeSlot(slot) {
+        if (!slot) return '准备中';
+        switch (slot.status) {
+            case 'submitting': return '正在提交';
+            case 'queued':
+                return slot.queuePosition
+                    ? `排队中 #${slot.queuePosition}${slot.queuedCount ? '/' + slot.queuedCount : ''}`
+                    : '排队中';
+            case 'running':
+                // 站点没给百分比（或尚未推送）时退化为"生成中"
+                if (slot.percent > 0) {
+                    const steps = (slot.step && slot.total) ? `（第 ${slot.step}/${slot.total} 步）` : '';
+                    return `生成中 ${Math.round(slot.percent)}%${steps}`;
+                }
+                return '生成中';
+            case 'done': return '已完成';
+            case 'failed': return '失败';
+            default: return slot.status || '准备中';
+        }
+    }
+
+    function describeJobs(jobs) {
+        const n = jobs.length;
+        if (n === 0) return '正在提交任务';
+        if (n === 1) return describeSlot(jobs[0]);
+        const done = jobs.filter(j => j.status === 'done').length;
+        const failed = jobs.filter(j => j.status === 'failed').length;
+        const pending = [];
+        jobs.forEach((j, i) => {
+            if (j.status !== 'done' && j.status !== 'failed') pending.push(`第 ${i + 1} 张${describeSlot(j)}`);
+        });
+        let s = `已完成 ${done}/${n} 张`;
+        if (failed) s += `，失败 ${failed} 张`;
+        if (pending.length) s += '；' + pending.join('，');
+        return s;
+    }
+
+    // 锁占用时再次点击 🎨NAI生图 显示的进度文字
+    function formatDrawProgress() {
+        const now = Date.now();
+        const who = drawState.isAuto ? '自动生图' : '生图';
+        const elapsed = `已 ${Math.max(0, Math.round((now - drawState.startedAt) / 1000))} 秒`;
+        switch (drawState.phase) {
+            case 'waiting': return `${who}即将开始…`;
+            case 'prompt': return `${who}进行中：AI 正在写提示词…（${elapsed}）`;
+            case 'precheck': return `${who}进行中：正在核对余额…（${elapsed}）`;
+            case 'jobs': return `${who}进行中：${describeJobs(drawState.jobs)}（${elapsed}）`;
+            case 'inserting': return `${who}进行中：正在把图片插入聊天…（${elapsed}）`;
+            case 'cooldown': {
+                const left = Math.max(1, Math.ceil((drawState.phaseAt + AUTO_COOLDOWN_MS - now) / 1000));
+                return `${who}刚刚结束，${left} 秒后可再次生图`;
+            }
+            default: return `${who}进行中（${elapsed}）`;
+        }
+    }
+
     async function doDraw(settings, isAuto = false) {
         if (!settings.apiKey) {
             toast('error', '请先在 ⚙️ NAI 设置 中填入 API Key');
             return;
         }
-        // 防止手动按钮与自动生图并发：手动按钮（isAuto=false）在锁占用时拒绝
-        // 自动路径（isAuto=true）由 onMessageReceived 已设置锁，跳过此检查避免自拒
-        if (!isAuto && drawingInProgress) {
-            toast('warning', '生图进行中，请稍候再试');
-            dlog('[NAI] doDraw 被锁拒绝 (drawingInProgress=true)');
-            return;
+        // 手动按钮：锁占用时不新开生图，弹出当前进度；否则自己上锁、结束时释放
+        // 自动路径（isAuto=true）由 onMessageReceived 负责上锁与释放（含开始前等待与结束后冷却）
+        if (!isAuto) {
+            if (drawState.active) {
+                toast('info', formatDrawProgress());
+                dlog('[NAI] 生图进行中，显示进度：', drawState.phase);
+                return;
+            }
+            beginDraw(false);
         }
-        // 重置轮询 toast 去重标志
-        pollJobState.queuedShown = false;
-        pollJobState.runningShown = false;
+        try {
+            await runDraw(settings);
+        } finally {
+            if (!isAuto) endDraw();
+        }
+    }
+
+    async function runDraw(settings) {
+        setDrawPhase('prompt');
         // 只读尾部一小段 → 剔除 NAI 生图消息 → 取最近 N 条真实对话（N 由设置控制）
         const tail = getContextMessages(settings.contextMessageCount);
         const filtered = tail.filter(m => !isNaiImageMessage(m));
@@ -1043,6 +1245,7 @@
             // 提交前余额预检（张数 × 单张 cost）
             const count = Math.max(1, Math.min(MAX_BATCH, settings.count | 0));
             const unitCost = resolveSize(settings.size, settings.resolution, settings.model).cost;
+            setDrawPhase('precheck');
             if (!(await precheckBalance(settings, unitCost * count))) return;
 
             toast('info', `提交 ${count} 张生图任务…`);
@@ -1050,7 +1253,8 @@
 
             // 部分成功也要把已生成的图插进聊天（v23 失败隔离）
             if (results.length > 0) {
-                await insertImagesToChat(results);
+                setDrawPhase('inserting');
+                await insertImagesToChat(results, buildDrawMeta(aiPrompt, prompt, negative, settings));
             }
 
             if (failures.length === 0) {
@@ -1747,8 +1951,8 @@
 
     // 自动生图防抖：同一消息 id 不重复触发
     const processedMessageIds = new Set();
-    // 标记：脚本正在生图过程中（避免插入的消息再次触发生图形成循环）
-    let drawingInProgress = false;
+    // 生图锁：v30 起与手动按钮共用 drawState.active（见 [7] 主流程），
+    // 同时承担"避免插入的消息再次触发生图形成循环"的作用
 
     async function onMessageReceived(messageId) {
         try {
@@ -1769,7 +1973,8 @@
             dlog('[NAI] MSG_RECV id=', messageId,
                 'name=', m && m.name,
                 'autoDraw=', settings.autoDraw,
-                'drawingInProgress=', drawingInProgress,
+                'drawActive=', drawState.active,
+                'phase=', drawState.phase,
                 'isNaiImage=', isNaiImage);
 
             if (!settings.autoDraw) return;
@@ -1788,8 +1993,8 @@
                 return;
             }
 
-            // 防循环 1: 脚本正在生图，期间触发的任何 MESSAGE_RECEIVED 都忽略
-            if (drawingInProgress) {
+            // 防循环 1: 脚本正在生图（手动或自动），期间触发的任何 MESSAGE_RECEIVED 都忽略
+            if (drawState.active) {
                 dlog('[NAI] 忽略生图过程中的消息触发，避免循环');
                 return;
             }
@@ -1810,15 +2015,16 @@
                 processedMessageIds.add(messageId);
             }
 
-            // 标记生图开始，防止插入消息时再次触发
-            drawingInProgress = true;
+            // 上锁（与手动按钮共用），防止插入消息时再次触发；检查与上锁之间没有 await，不会被抢
+            beginDraw(true);
             try {
-                await sleep(500);
+                await sleep(AUTO_START_DELAY_MS);
                 await doDraw(settings, true);
             } finally {
                 // 生图结束后延迟释放锁，确保 createChatMessages 触发的 MESSAGE_RECEIVED 已经过期
-                await sleep(2000);
-                drawingInProgress = false;
+                setDrawPhase('cooldown');
+                await sleep(AUTO_COOLDOWN_MS);
+                endDraw();
             }
         } catch (e) {
             console.error('[NAI] 自动生图异常:', e);
@@ -1897,7 +2103,7 @@
         }
 
         // 这行始终输出（不随 DEBUG 开关），便于确认脚本是否成功加载
-        console.info(`[NAI] 脚本已加载 (v28)，调试日志${DEBUG ? '已开启' : '已关闭（排查问题时把脚本开头的 DEBUG 改成 true）'}`);
+        console.info(`[NAI] 脚本已加载 (v30)，调试日志${DEBUG ? '已开启' : '已关闭（排查问题时把脚本开头的 DEBUG 改成 true）'}`);
     }
 
     // 启动
