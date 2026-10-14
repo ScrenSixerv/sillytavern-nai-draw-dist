@@ -1,4 +1,4 @@
-// Nai2API 酒馆助手生图脚本 v30
+// Nai2API 酒馆助手生图脚本 v31
 // 作者: glm5.2 glm5.3 deepseek-v4.1-flash claude-opus-5.5
 // 依赖: JS-Slash-Runner (TavernHelper) + SillyTavern >= 1.12.14   API: https://nai.sta1n.cn
 // 安装与用法说明见仓库 README（本版本不含调试日志；需要排查请用调试版）
@@ -432,22 +432,63 @@
         } catch (e) { /* 无此 API */ }
     }
 
+    const PROMPT_REQUEST_MARKER = '【任务预告】';   // 与 generatePromptByAI 里的 taskAnnounce 同步
+
+    function messageContentText(content) {
+        if (typeof content === 'string') return content;
+        if (Array.isArray(content)) {
+            return content.map(p => (p && typeof p.text === 'string') ? p.text : '').join('');
+        }
+        return '';
+    }
+
+    function isOwnPromptRequest(data) {
+        const msgs = data && Array.isArray(data.messages) ? data.messages : null;
+        if (!msgs) return false;
+        return msgs.some(m => m && messageContentText(m.content).indexOf(PROMPT_REQUEST_MARKER) !== -1);
+    }
+
+    function guardMultiSwipeParam() {
+        if (typeof eventOn !== 'function') return () => {};
+        const evt = (typeof tavern_events !== 'undefined' && tavern_events && tavern_events.CHAT_COMPLETION_SETTINGS_READY)
+            || 'chat_completion_settings_ready';
+        try {
+            const ret = eventOn(evt, (data) => {
+                try {
+                    if (!data || data.n == null) return;
+                    if (!isOwnPromptRequest(data)) return;
+                    delete data.n;
+                } catch (e) { /* 处理失败不阻断请求 */ }
+            });
+            return () => { try { if (ret && typeof ret.stop === 'function') ret.stop(); } catch (e) { /* 忽略 */ } };
+        } catch (e) {
+            console.warn('[NAI] 注册 n 参数过滤失败（"每次生成多个备选回复"大于 1 时提示词请求可能报错）:', e);
+            return () => {};
+        }
+    }
+
     async function runPromptGeneration(sysPrompt) {
         const ctx = getCtx();
         const generationId = makeGenerationId();
+        const unguard = guardMultiSwipeParam();
         let pending;
-        if (typeof generateRaw === 'function') {
-            pending = generateRaw({
-                user_input: sysPrompt,
-                ordered_prompts: ['user_input'],
-                should_silence: true,
-                generation_id: generationId,
-            });
-        } else if (ctx && typeof ctx.generateRaw === 'function') {
-            pending = ctx.generateRaw({ prompt: sysPrompt, instruct: false });
-        } else {
-            const escaped = sysPrompt.replace(/"/g, '\\"');
-            pending = triggerSlash(`/genraw lock=on instruct=off "${escaped}"`);
+        try {
+            if (typeof generateRaw === 'function') {
+                pending = generateRaw({
+                    user_input: sysPrompt,
+                    ordered_prompts: ['user_input'],
+                    should_silence: true,
+                    generation_id: generationId,
+                });
+            } else if (ctx && typeof ctx.generateRaw === 'function') {
+                pending = ctx.generateRaw({ prompt: sysPrompt, instruct: false });
+            } else {
+                const escaped = sysPrompt.replace(/"/g, '\\"');
+                pending = triggerSlash(`/genraw lock=on instruct=off "${escaped}"`);
+            }
+        } catch (e) {
+            unguard();
+            throw e;
         }
 
         let timer = null;
@@ -466,6 +507,7 @@
             throw e;
         } finally {
             if (timer) clearTimeout(timer);
+            unguard();
         }
     }
 

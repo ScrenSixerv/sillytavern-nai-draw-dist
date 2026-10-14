@@ -1,4 +1,4 @@
-// Nai2API 酒馆助手生图脚本 v30（调试版：DEBUG 已开启，会输出完整日志）
+// Nai2API 酒馆助手生图脚本 v31（调试版：DEBUG 已开启，会输出完整日志）
 // 作者: glm5.2 glm5.3 deepseek-v4.1-flash claude-opus-5.5
 // 依赖: JS-Slash-Runner (TavernHelper) + SillyTavern >= 1.12.14   API: https://nai.sta1n.cn
 // 安装、用法与调试说明见仓库 README；排查问题：把下方的 DEBUG 改为 true
@@ -582,6 +582,50 @@
         } catch (e) { /* 无此 API */ }
     }
 
+    // v31 修复：剔除脚本自己那次提示词请求里的 n 参数
+    // 酒馆助手的 generateRaw 按"普通聊天生成"（type='normal'）构造请求，酒馆 AI 回复配置里的
+    // "每次生成多个备选回复"（Multi Swipe，参数 n）大于 1 时会跟着带上 n。DeepSeek 等接口只认 n = 1，
+    // 直接返回 Bad Request（个别中转站返回 401）；即使接口接受，也会一次生成 n 份、脚本只用第一份，白耗 token。
+    // 酒馆每次发请求前会触发 CHAT_COMPLETION_SETTINGS_READY 并把请求体交给监听者，监听里改动直接生效。
+    // 只在本次提示词请求期间挂监听，且只处理消息里带"【任务预告】"标记的请求——主聊天的多备选回复不受影响
+    const PROMPT_REQUEST_MARKER = '【任务预告】';   // 与 generatePromptByAI 里的 taskAnnounce 同步
+
+    function messageContentText(content) {
+        if (typeof content === 'string') return content;
+        if (Array.isArray(content)) {
+            // 多模态消息：content 是 [{type:'text', text}, {type:'image_url', ...}] 形式
+            return content.map(p => (p && typeof p.text === 'string') ? p.text : '').join('');
+        }
+        return '';
+    }
+
+    function isOwnPromptRequest(data) {
+        const msgs = data && Array.isArray(data.messages) ? data.messages : null;
+        if (!msgs) return false;
+        return msgs.some(m => m && messageContentText(m.content).indexOf(PROMPT_REQUEST_MARKER) !== -1);
+    }
+
+    // 挂上监听，返回摘除函数；环境不支持时返回空函数（行为退回 v30）
+    function guardMultiSwipeParam() {
+        if (typeof eventOn !== 'function') return () => {};
+        const evt = (typeof tavern_events !== 'undefined' && tavern_events && tavern_events.CHAT_COMPLETION_SETTINGS_READY)
+            || 'chat_completion_settings_ready';
+        try {
+            const ret = eventOn(evt, (data) => {
+                try {
+                    if (!data || data.n == null) return;
+                    if (!isOwnPromptRequest(data)) return;
+                    dlog(`[NAI] 提示词请求带有 n=${data.n}（酒馆"每次生成多个备选回复"），已从本次请求中移除`);
+                    delete data.n;
+                } catch (e) { /* 处理失败不阻断请求 */ }
+            });
+            return () => { try { if (ret && typeof ret.stop === 'function') ret.stop(); } catch (e) { /* 忽略 */ } };
+        } catch (e) {
+            console.warn('[NAI] 注册 n 参数过滤失败（"每次生成多个备选回复"大于 1 时提示词请求可能报错）:', e);
+            return () => {};
+        }
+    }
+
     // 统一的提示词生成调用
     // v22 修复要点：
     //   1. 优先用酒馆助手全局 generateRaw 并传 should_silence: true——静默生成不会把酒馆的
@@ -590,24 +634,32 @@
     //   2. ordered_prompts 只保留 user_input，语义等同旧的 raw 调用（请求以 user 消息结尾，
     //      不会出现 assistant 结尾的 prefill 请求）
     //   3. 带 generation_id，超时/失败时能精确停止本次请求
+    //   v31：请求期间挂 guardMultiSwipeParam，剔除酒馆 Multi Swipe 带进来的 n
     async function runPromptGeneration(sysPrompt) {
         const ctx = getCtx();
         const generationId = makeGenerationId();
+        const unguard = guardMultiSwipeParam();
         let pending;
-        if (typeof generateRaw === 'function') {
-            pending = generateRaw({
-                user_input: sysPrompt,
-                ordered_prompts: ['user_input'],
-                should_silence: true,
-                generation_id: generationId,
-            });
-        } else if (ctx && typeof ctx.generateRaw === 'function') {
-            // 兜底 1：ST 上下文自带（旧行为，无法静默）
-            pending = ctx.generateRaw({ prompt: sysPrompt, instruct: false });
-        } else {
-            // 兜底 2：斜杠命令
-            const escaped = sysPrompt.replace(/"/g, '\\"');
-            pending = triggerSlash(`/genraw lock=on instruct=off "${escaped}"`);
+        try {
+            if (typeof generateRaw === 'function') {
+                pending = generateRaw({
+                    user_input: sysPrompt,
+                    ordered_prompts: ['user_input'],
+                    should_silence: true,
+                    generation_id: generationId,
+                });
+            } else if (ctx && typeof ctx.generateRaw === 'function') {
+                // 兜底 1：ST 上下文自带（旧行为，无法静默）
+                pending = ctx.generateRaw({ prompt: sysPrompt, instruct: false });
+            } else {
+                // 兜底 2：斜杠命令
+                const escaped = sysPrompt.replace(/"/g, '\\"');
+                pending = triggerSlash(`/genraw lock=on instruct=off "${escaped}"`);
+            }
+        } catch (e) {
+            // 同步抛错时 finally 还没进入，这里先摘掉监听
+            unguard();
+            throw e;
         }
 
         let timer = null;
@@ -627,6 +679,7 @@
             throw e;
         } finally {
             if (timer) clearTimeout(timer);
+            unguard();
         }
     }
 
@@ -2103,7 +2156,7 @@
         }
 
         // 这行始终输出（不随 DEBUG 开关），便于确认脚本是否成功加载
-        console.info(`[NAI] 脚本已加载 (v30)，调试日志${DEBUG ? '已开启' : '已关闭（排查问题时把脚本开头的 DEBUG 改成 true）'}`);
+        console.info(`[NAI] 脚本已加载 (v31)，调试日志${DEBUG ? '已开启' : '已关闭（排查问题时把脚本开头的 DEBUG 改成 true）'}`);
     }
 
     // 启动
